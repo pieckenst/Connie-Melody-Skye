@@ -1,3 +1,16 @@
+"""
+The Help Menu Cog provides a help system for the Discord bot, allowing users to access information about the bot's commands and features.
+
+The `Dropdown` class is a custom Discord UI Select component that allows users to select a category of commands to view help for. The `DropdownView` class is a custom Discord UI View that contains the `Dropdown` component.
+
+The `PaginationView` class is a custom Discord UI View that allows users to navigate through multiple pages of help information, with a dropdown to select a category and buttons to move to the previous or next page.
+
+The `Help` class is a custom Discord help command that provides the main functionality of the help system, including sending the initial help menu, sending help information for individual commands, and sending help information for specific cogs (command categories).
+
+The `HelpEmbed` class is a custom Discord Embed class that is used to format the help information in an embedded message.
+
+The `get_help` function is a helper function that is used to generate the help information for a specific cog.
+"""
 import discord
 from discord.ext import commands
 from discord import ButtonStyle, SelectOption
@@ -136,6 +149,32 @@ async def get_help(self, interaction, CogToPassAlong):
                 commands_text = command_text
             else:
                 commands_text += command_text
+        elif isinstance(command, discord.app_commands.Group):
+            command_text = f"『`/{command.name}`』: {command.description}\n"
+            if len(commands_text) + len(command_text) > 1024:
+                embed.add_field(name="Commands", value=commands_text, inline=False)
+                embeds.append(embed)
+                embed = discord.Embed(
+                    title=f"{CogToPassAlong} - Commands (Continued)",
+                    description=cog.__doc__,
+                )
+                embed.set_author(name="Help System")
+                commands_text = command_text
+            else:
+                commands_text += command_text
+            for subcommand in command.commands:
+                subcommand_text = f"  『`/{command.name} {subcommand.name}`』: {subcommand.description}\n"
+                if len(commands_text) + len(subcommand_text) > 1024:
+                    embed.add_field(name="Commands", value=commands_text, inline=False)
+                    embeds.append(embed)
+                    embed = discord.Embed(
+                        title=f"{CogToPassAlong} - Commands (Continued)",
+                        description=cog.__doc__,
+                    )
+                    embed.set_author(name="Help System")
+                    commands_text = subcommand_text
+                else:
+                    commands_text += subcommand_text
 
     if commands_text:
         embed.add_field(name="Commands", value=commands_text, inline=False)
