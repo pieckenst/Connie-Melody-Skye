@@ -1,101 +1,98 @@
 import discord
 from discord.ext import commands
-from discord import ButtonStyle, SelectOption
+from discord import ButtonStyle, SelectOption, Interaction
 from discord.ui import Button, Select, View
+import contextlib
 
 class Dropdown(discord.ui.Select):
-    def __init__(self, options, bot):
-        self.bot = bot
+    """
+    A dropdown menu that allows the user to select a category from a list of available categories. When a category is selected, the `get_help` function is called with the selected category to display the help information for that category.
+    
+    The `Dropdown` class inherits from `discord.ui.Select` and is used as part of the `DropdownView` class to create the dropdown menu. The `callback` method is called when the user selects an option from the dropdown menu, and it handles the logic for displaying the help information for the selected category.
+    
+    If the user selects the "Close" option, the help embed is updated to display a message indicating that the help menu has been closed.
+    """
+    def __init__(self, options, ctx):
+        self.bot = ctx.bot
         super().__init__(placeholder="Select a category", min_values=1, max_values=1, options=options)
 
-    async def callback(self, interaction: discord.Interaction):
+    async def callback(self, interaction: Interaction):
         label = self.values[0]
         for cog in self.bot.cogs:
             if label == cog:
                 await get_help(self, interaction, CogToPassAlong=cog)
                 return
         if label == "Close":
-            embede = discord.Embed(
-                title=":books: Help System",
-                description=f"Welcome To {self.bot.user.name} Help System",
+            embede = discord.Embed(title=f"{self.bot.user.name} Help", description="", color=discord.Color.blurple())
+            embede.set_footer(
+                text="Use help [command] or help [category] for more information | <> is required | [] is optional"
             )
-            embede.set_footer(text="Use dropdown to select category")
             await interaction.response.edit_message(embed=embede, view=None)
 
-
 class DropdownView(discord.ui.View):
-    def __init__(self, bot):
+    def __init__(self, options, ctx):
         super().__init__()
-        self.bot = bot
-        options = [SelectOption(label=cog, value=cog) for cog in bot.cogs]
-        options.append(SelectOption(label="Close", value="Close"))
+        self.bot = ctx
         self.add_item(Dropdown(options, self.bot))
-
-class PaginationView(discord.ui.View):
-    def __init__(self, embeds, bot):
-        super().__init__()
-        self.embeds = embeds
-        self.current_page = 0
-        self.bot = bot
-        self.add_item(Dropdown([SelectOption(label=cog, value=cog) for cog in bot.cogs] + [SelectOption(label="Close", value="Close")], self.bot))
-        self.add_item(Button(style=ButtonStyle.primary, label="◀", custom_id="previous"))
-        self.add_item(Button(style=ButtonStyle.primary, label="▶", custom_id="next"))
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.data["custom_id"] == "previous":
-            self.current_page = max(0, self.current_page - 1)
-        elif interaction.data["custom_id"] == "next":
-            self.current_page = min(len(self.embeds) - 1, self.current_page + 1)
-
-        await interaction.response.edit_message(embed=self.embeds[self.current_page], view=self)
-        return True
 
 class Help(commands.Cog):
     "The Help Menu Cog"
     def __init__(self, bot):
         self.bot = bot
+        self.bot.help_command = MyHelp()
 
-    @commands.slash_command(name="help", description="Shows the help menu")
-    async def help_slash(self, inter: discord.Interaction, command: str = None):
-        await self.handle_help(inter, command)
+class HelpEmbed(discord.Embed):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.timestamp = discord.utils.utcnow()
+        text = "Use help [command] or help [category] for more information | <> is required | [] is optional"
+        self.set_footer(text=text)
+        self.color = discord.Color.blurple()
 
-    @commands.command(name="help")
-    async def help_command(self, ctx, *, command=None):
-        await self.handle_help(ctx, command)
-
-    async def handle_help(self, invoke_obj, command=None):
-        if command is None:
-            await self.send_bot_help(invoke_obj)
-        else:
-            cmd = self.bot.get_command(command)
-            if cmd:
-                await self.send_command_help(invoke_obj, cmd)
-            else:
-                await invoke_obj.response.send_message(
-                    f"No command called '{command}' found.", ephemeral=True
-                )
-
-    async def send_bot_help(self, invoke_obj):
-        embede = discord.Embed(
-            title=":books: Help System",
-            description=f"Welcome To {self.bot.user.name} Help System",
+class MyHelp(commands.HelpCommand):
+    def __init__(self):
+        super().__init__(
+            command_attrs={"help": "The help command for the bot"}
         )
-        embede.set_footer(text="Use dropdown to select category")
-        view = DropdownView(self.bot)
-        await invoke_obj.response.send_message(embed=embede, view=view)
 
-    async def send_command_help(self, invoke_obj, command):
-        signature = f"/{command.name}" if isinstance(invoke_obj, discord.Interaction) else f"{invoke_obj.prefix}{command.name}"
-        if isinstance(command, commands.Command):
-            signature += f" {command.signature}"
-        embed = HelpEmbed(
-            title=signature, description=command.help or "No help found..."
-        )
+    async def send(self, **kwargs):
+        await self.get_destination().send(**kwargs)
+
+    async def send_bot_help(self, mapping):
+        ctx = self.context
+        embed = HelpEmbed(title=f"{ctx.me.display_name} Help")
+        usable = 0
+        myoptions = []
+        view = DropdownView(myoptions, ctx)
+
+        for cog, commands in mapping.items():
+            if filtered_commands := await self.filter_commands(commands):
+                amount_commands = len(filtered_commands)
+                usable += amount_commands
+                if cog:
+                    name = cog.qualified_name
+                    description = cog.description or "No description"
+                else:
+                    name = "No Category"
+                    description = "Commands with no category"
+                myoptions.append(SelectOption(label=name, value=name))
+
+        myoptions.append(SelectOption(label="Close", value="Close"))
+        await self.send(embed=embed, view=view)
+
+    async def send_command_help(self, command):
+        signature = self.get_command_signature(command)
+        embed = HelpEmbed(title=signature, description=command.brief or "No help found...")
 
         if cog := command.cog:
             embed.add_field(name="Category", value=cog.qualified_name)
 
-        embed.add_field(name="Usable", value="Yes")
+        can_run = "No"
+        with contextlib.suppress(commands.CommandError):
+            if await command.can_run(self.context):
+                can_run = "Yes"
+
+        embed.add_field(name="Usable", value=can_run)
 
         if command._buckets and (cooldown := command._buckets._cooldown):
             embed.add_field(
@@ -103,48 +100,47 @@ class Help(commands.Cog):
                 value=f"{cooldown.rate} per {cooldown.per:.0f} seconds",
             )
 
-        await invoke_obj.response.send_message(embed=embed)
+        await self.send(embed=embed)
 
-class HelpEmbed(discord.Embed):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.timestamp = discord.utils.utcnow()
-        self.set_footer(text="Use dropdown to select category")
+    async def send_help_embed(self, title, description, commands):
+        embed = HelpEmbed(title=title, description=description or "No help found...")
+
+        if filtered_commands := await self.filter_commands(commands):
+            for command in filtered_commands:
+                embed.add_field(name=self.get_command_signature(command), value=command.brief or "No help found...")
+
+        await self.send(embed=embed)
+
+    async def send_group_help(self, group):
+        title = self.get_command_signature(group)
+        await self.send_help_embed(title, group.help, group.commands)
+
+    async def send_cog_help(self, cog):
+        title = cog.qualified_name or "No"
+        await self.send_help_embed(f"{title} Category", cog.description, cog.get_commands())
 
 async def get_help(self, interaction, CogToPassAlong):
-    cog = self.bot.get_cog(CogToPassAlong)
-    if not cog:
-        return
-    embeds = []
-    embed = discord.Embed(
+    """
+        Generates a help embed for a specific cog in the Discord bot.
+    
+        Parameters:
+        - `interaction`: The Discord interaction object.
+        - `CogToPassAlong`: The name of the cog to generate help for.
+    
+        The function retrieves the commands for the specified cog, creates a Discord embed with the cog's name and description, and then adds fields for each command in the cog (excluding hidden commands). The embed is then sent as the response to the interaction.
+            for _ in self.bot.get_cog(CogToPassAlong).get_commands():
+            pass
+    """
+    emb = discord.Embed(
         title=f"{CogToPassAlong} - Commands",
-        description=cog.__doc__,
+        description=self.bot.cogs[CogToPassAlong].__doc__,
+        color=discord.Color.blurple(),
     )
-    embed.set_author(name="Help System")
-    commands_text = ""
-    for command in cog.get_commands():
-        if isinstance(command, commands.Command):
-            command_text = f"『`{command.name}`』: {command.help}\n"
-            if len(commands_text) + len(command_text) > 1024:
-                embed.add_field(name="Commands", value=commands_text, inline=False)
-                embeds.append(embed)
-                embed = discord.Embed(
-                    title=f"{CogToPassAlong} - Commands (Continued)",
-                    description=cog.__doc__,
-                )
-                embed.set_author(name="Help System")
-                commands_text = command_text
-            else:
-                commands_text += command_text
-    if commands_text:
-        embed.add_field(name="Commands", value=commands_text, inline=False)
-    embeds.append(embed)
+    emb.set_author(name="Help System")
+    for command in self.bot.get_cog(CogToPassAlong).get_commands():
+        if not command.hidden:
+            emb.add_field(name=f"`{command.name}`", value=command.help, inline=True)
+    await interaction.response.edit_message(embed=emb)
 
-    if len(embeds) > 1:
-        view = PaginationView(embeds, self.bot)
-        await interaction.response.edit_message(embed=embeds[0], view=view)
-    else:
-        await interaction.response.edit_message(embed=embeds[0])
-
-def setup(bot):
-    bot.add_cog(Help(bot))
+async def setup(bot):
+    await bot.add_cog(Help(bot))
